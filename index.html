@@ -10177,6 +10177,39 @@ document.getElementById('ebSyncNow')?.addEventListener('click',()=>ebSyncNow(fal
 
     const iHdr=detectarFilaEncabezado(filasRaw,['Row name','Orden','Estilo','Customer'],25);
     const headers=filasRaw[iHdr]||[];
+    const columnas=headers.map(h=>norm(String(h||'')));
+    const semana=columnas.indexOf('SEMANA'), cantidad=columnas.indexOf('TOTAL QTY');
+    if(semana>=0 && cantidad>=0 && !headers.some(esEncabezadoFecha)){
+      const indice=(...nombres)=>columnas.findIndex(h=>nombres.includes(h));
+      const linea=indice('ROW NAME','LINEA','LINE'), orden=indice('ORDEN','ORDER');
+      const estilo=indice('ESTILO','STYLE'), capas=indice('CAPAS DE CUERO','CAPAS');
+      if([linea,orden,estilo,capas].some(i=>i<0)) throw new Error('Faltan línea, orden, estilo o capas en la demanda semanal.');
+      const horizonte=corteCombinadoConfigurarSemanasDesdeKeys([]);
+      const registros=new Map();
+      for(let i=iHdr+1;i<filasRaw.length;i++){
+        const fila=filasRaw[i];
+        if(!fila || !fila[orden] || !(celdaANumero(fila[cantidad])>0)) continue;
+        const valor=String(fila[semana]??'').trim();
+        const match=/^(?:(\d{4})-)?W?(\d{1,2})$/i.exec(valor);
+        if(!match || +match[2]<1 || +match[2]>53) throw new Error('Semana inválida en fila '+(i+1));
+        const sufijo='-W'+match[2].padStart(2,'0');
+        const fecha=horizonte.find(key=>match[1]?key===match[1]+sufijo:key.endsWith(sufijo));
+        if(!fecha) continue;
+        const qty=celdaANumero(fila[cantidad]), capasCuero=celdaANumero(fila[capas]);
+        if(!(capasCuero>0)) throw new Error('Capas de Cuero inválidas en fila '+(i+1));
+        const piezas=qty*capasCuero;
+        const nombre=String(fila[linea]||'').trim(), pedido=String(fila[orden]).trim(), raw=String(fila[estilo]||'').trim();
+        const clave=JSON.stringify([fecha,nombre,pedido,raw,capasCuero]);
+        if(!registros.has(clave)) registros.set(clave,{fecha,linea:nombre,orden:pedido,estilo:limpiarEstiloDisplay(raw),estiloNorm:limpiarEstilo(raw),cliente:'',exDate:'',capasCuero,cantOrden:0,totalPlanificado:0,unidades:0,unidadesHC:0});
+        const reg=registros.get(clave);
+        reg.cantOrden+=qty;
+        reg.totalPlanificado+=piezas;
+        reg.unidades+=piezas;
+        reg.unidadesHC+=piezas;
+      }
+      if(!registros.size) throw new Error('Sin demanda positiva en el horizonte '+horizonte[0]+' a '+horizonte[horizonte.length-1]+'.');
+      return [...registros.values()].sort((a,b)=>a.fecha.localeCompare(b.fecha)||a.linea.localeCompare(b.linea)||a.orden.localeCompare(b.orden));
+    }
     const bloques=[];
 
     for(let c=0;c<headers.length;c++){
